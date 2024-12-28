@@ -98,6 +98,15 @@ type HeaderChain struct {
 	calcOrderCache *lru.Cache[common.Hash, calcOrderResponse]
 
 	logger *log.Logger
+
+	// stats caches
+	QiConvertedCache   *lru.Cache[common.Hash, *big.Int]
+	QuaiConvertedCache *lru.Cache[common.Hash, *big.Int]
+	BetaCache          *lru.Cache[common.Hash, *big.Int]
+	// this gives the percentage of the converted amount that is lost due to k quai
+	// and flow discount
+	SlipCache      *lru.Cache[common.Hash, uint64]
+	KQuaiSlipCache *lru.Cache[common.Hash, uint64]
 }
 
 // NewHeaderChain creates a new HeaderChain structure. ProcInterrupt points
@@ -129,6 +138,13 @@ func NewHeaderChain(db ethdb.Database, engine consensus.Engine, pEtxsRollupFetch
 
 	calcOrderCache, _ := lru.New[common.Hash, calcOrderResponse](c_calcOrderCacheLimit)
 	hc.calcOrderCache = calcOrderCache
+
+	// caches for stats
+	hc.QiConvertedCache, _ = lru.New[common.Hash, *big.Int](100)
+	hc.QuaiConvertedCache, _ = lru.New[common.Hash, *big.Int](100)
+	hc.BetaCache, _ = lru.New[common.Hash, *big.Int](100)
+	hc.SlipCache, _ = lru.New[common.Hash, uint64](100)
+	hc.KQuaiSlipCache, _ = lru.New[common.Hash, uint64](100)
 
 	genesisHash := hc.GetGenesisHashes()[0]
 	genesisNumber := rawdb.ReadHeaderNumber(db, genesisHash)
@@ -1168,6 +1184,44 @@ func (hc *HeaderChain) GetBlocksFromHash(hash common.Hash, n int) (blocks types.
 	return
 }
 
+func (hc *HeaderChain) GetBlockStats(hash common.Hash) types.BlockStats {
+	blockStats := types.BlockStats{QiConverted: big.NewInt(0),
+		QuaiConverted:        big.NewInt(0),
+		Beta:                 big.NewInt(0),
+		Slip:                 0,
+		KQuaiSlip:            0,
+		ConversionFlowAmount: big.NewInt(0),
+		MinerDifficulty:      big.NewInt(0)}
+
+	qiConverted, exists := hc.QiConvertedCache.Peek(hash)
+	if exists {
+		blockStats.QiConverted = new(big.Int).Set(qiConverted)
+	}
+	quaiConverted, exists := hc.QuaiConvertedCache.Peek(hash)
+	if exists {
+		blockStats.QuaiConverted = new(big.Int).Set(quaiConverted)
+	}
+	beta, exists := hc.BetaCache.Peek(hash)
+	if exists && beta != nil {
+		blockStats.Beta = new(big.Int).Set(beta)
+	}
+	slip, exists := hc.SlipCache.Peek(hash)
+	if exists {
+		blockStats.Slip = slip
+	}
+	kQuaiSlip, exists := hc.KQuaiSlipCache.Peek(hash)
+	if exists {
+		blockStats.KQuaiSlip = kQuaiSlip
+	}
+	conversionFlowAmount := rawdb.ReadConversionFlowAmount(hc.headerDb, hash)
+	blockStats.ConversionFlowAmount = new(big.Int).Set(conversionFlowAmount)
+
+	minerDifficulty := rawdb.ReadMinerDifficulty(hc.headerDb, hash)
+	blockStats.MinerDifficulty = new(big.Int).Set(minerDifficulty)
+
+	return blockStats
+}
+
 func (hc *HeaderChain) NodeLocation() common.Location {
 	return hc.bc.NodeLocation()
 }
@@ -1322,6 +1376,104 @@ func (hc *HeaderChain) CheckIfEtxIsEligible(etxEligibleSlices common.Hash, to co
 
 	// Check if the bit is set to 1
 	return etxEligibleSlices[byteIndex]&(1<<bitIndex) != 0
+}
+
+// ApplyQuadraticDiscount applies the slippage based on the historical
+// converted amounts and apply the
+func (hc *HeaderChain) ApplyQuadraticDiscount(valueInt, meanInt *big.Int) *big.Float {
+	value := new(big.Float).SetInt(valueInt)
+	mean := new(big.Float).SetInt(meanInt)
+	tenTimesAverage := new(big.Float).Mul(mean, new(big.Float).SetInt64(10))
+	if value.Cmp(mean) <= 0 {
+		value = new(big.Float).Mul(value, new(big.Float).SetInt64(99))
+		value = new(big.Float).Quo(value, new(big.Float).SetInt64(100))
+		return value
+	} else if value.Cmp(tenTimesAverage) > 0 {
+		return new(big.Float).SetInt64(0)
+	} else {
+		normalizedValue := new(big.Float).Quo(value, tenTimesAverage)
+		normalizedValueSquare := new(big.Float).Mul(normalizedValue, normalizedValue)
+		normalizedValueSquareOverTwo := new(big.Float).Quo(normalizedValueSquare, new(big.Float).SetInt64(2))
+		discountedValue := new(big.Float).Sub(new(big.Float).SetInt64(1), normalizedValueSquareOverTwo)
+		// Make sure that discounted value is greater than zero as a sanity check
+		if discountedValue.Cmp(new(big.Float).SetInt64(0)) <= 0 {
+			return new(big.Float).SetInt64(0)
+		} else {
+			return discountedValue
+		}
+	}
+}
+
+// ComputeConversionFlowAmount computes a moving average conversion flow amount
+func (hc *HeaderChain) ComputeConversionFlowAmount(block *types.WorkObject, currentBlockConversionAmount *big.Int) *big.Int {
+	prevBlockConversionFlowAmount := rawdb.ReadConversionFlowAmount(hc.headerDb, block.ParentHash(common.ZONE_CTX))
+	newConversionFlowAmount := new(big.Int).Mul(prevBlockConversionFlowAmount, big.NewInt(99))
+	newConversionFlowAmount = new(big.Int).Add(newConversionFlowAmount, currentBlockConversionAmount)
+	newConversionFlowAmount = new(big.Int).Div(newConversionFlowAmount, big.NewInt(100))
+	return newConversionFlowAmount
+}
+
+// ComputeMinerDifficulty computes long term moving average of the block difficulty
+func (hc *HeaderChain) ComputeMinerDifficulty(block *types.WorkObject) *big.Int {
+	// If the block is the goldenage fork 3 block directly return the block difficulty
+	if block.NumberU64(common.ZONE_CTX) <= params.GoldenAgeForkNumberV3+params.MinerDifficultyWindow {
+		return block.Difficulty()
+	}
+	prevBlockMinerDifficulty := rawdb.ReadMinerDifficulty(hc.headerDb, block.ParentHash(common.ZONE_CTX))
+	newMinerDifficulty := new(big.Int).Mul(prevBlockMinerDifficulty, big.NewInt(int64(params.MinerDifficultyWindow)-1))
+	newMinerDifficulty = new(big.Int).Add(newMinerDifficulty, block.Difficulty())
+	newMinerDifficulty = new(big.Int).Div(newMinerDifficulty, big.NewInt(int64(params.MinerDifficultyWindow)))
+	return newMinerDifficulty
+}
+
+// ComputeKQuaiDiscount calculates the change in the K Quai
+func (hc *HeaderChain) ComputeKQuaiDiscount(block *types.WorkObject) *big.Int {
+	if block.NumberU64(common.ZONE_CTX) == params.GoldenAgeForkNumberV3 {
+		return big.NewInt(0)
+	}
+	// The idea is that taking the derivative of the K Quai over a 1000 block
+	// window and applying the discount on the conversion flow will offset the
+	// amount of money that can be made by arbitraging the exchange rate
+	// adjustment
+	kQuaiOld := big.NewInt(0)
+	if block.NumberU64(common.ZONE_CTX) <= 1000 {
+		kQuaiOld = params.ExchangeRate
+	} else {
+		prevBlock := hc.GetBlockByNumber(block.NumberU64(common.ZONE_CTX) - 1000)
+		kQuaiOld = prevBlock.ExchangeRate()
+	}
+
+	// If the discount is between -100 and 100 the discount is applied, if its
+	// more than 100 or less than -100, the whole of conversion amount is
+	// consumed
+	kQuaiDiscount := new(big.Int).Sub(kQuaiOld, block.ExchangeRate())
+	kQuaiDiscount = new(big.Int).Mul(kQuaiDiscount, big.NewInt(100))
+	kQuaiDiscount = new(big.Int).Div(kQuaiDiscount, kQuaiOld)
+
+	// First check is that the discount value is negative
+	// and cap the values between 0 or 100
+	if kQuaiDiscount.Cmp(big.NewInt(0)) < 0 {
+		if kQuaiDiscount.Cmp(big.NewInt(-100)) < 0 {
+			kQuaiDiscount = big.NewInt(100)
+		} else {
+			kQuaiDiscount = new(big.Int).Mul(kQuaiDiscount, big.NewInt(-1))
+		}
+	} else {
+		if kQuaiDiscount.Cmp(big.NewInt(100)) > 0 {
+			kQuaiDiscount = big.NewInt(100)
+		}
+	}
+
+	// Read the kQuai discount value stored for the parent
+	kQuaiDiscountParent := rawdb.ReadKQuaiDiscount(hc.headerDb, block.ParentHash(common.ZONE_CTX))
+
+	// KQuaiDiscount value that is used is also a ewma with the same frequency as
+	// the exchange rate adjustment
+	newKQuaiDiscount := new(big.Int).Mul(kQuaiDiscountParent, big.NewInt(999))
+	newKQuaiDiscount = new(big.Int).Add(newKQuaiDiscount, kQuaiDiscount)
+	newKQuaiDiscount = new(big.Int).Div(newKQuaiDiscount, big.NewInt(1000))
+
+	return newKQuaiDiscount
 }
 
 // IsGenesisHash checks if a hash is a genesis hash
