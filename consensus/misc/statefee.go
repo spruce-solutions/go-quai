@@ -25,6 +25,9 @@ func CalcStateLimit(parent *types.WorkObject, stateCeil uint64) uint64 {
 	if parent.NumberU64(common.ZONE_CTX) == params.GoldenAgeForkNumberV2 {
 		limit = params.MinGasLimit(parent.NumberU64(common.ZONE_CTX))
 	}
+	if parent.NumberU64(common.ZONE_CTX) == params.GoldenAgeForkNumberV4 {
+		limit = params.MinGasLimit(parent.NumberU64(common.ZONE_CTX))
+	}
 
 	var desiredLimit uint64
 	percentStateUsed := parent.StateUsed() * 100 / parent.StateLimit()

@@ -199,6 +199,7 @@ const (
 	GoldenAgeForkNumberV1       = 180000
 	GoldenAgeForkNumberV2       = 588000
 	GoldenAgeForkNumberV3       = 1350000
+	GoldenAgeForkNumberV4       = 1455000
 	GoldenAgeForkGraceNumber    = 100
 	GoldenAgeGracePaymentPeriod = 6000
 )
@@ -235,8 +236,10 @@ func MinGasLimit(number uint64) uint64 {
 		return 5000000
 	} else if number < GoldenAgeForkNumberV2 {
 		return 10000000
-	} else {
+	} else if number < GoldenAgeForkNumberV4 {
 		return 12000000
+	} else {
+		return 13000000
 	}
 }
 

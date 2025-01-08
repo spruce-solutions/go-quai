@@ -145,13 +145,8 @@ func (v *BlockValidator) SanityCheckWorkObjectBlockViewBody(wo *types.WorkObject
 	} else {
 		// If the fork has been triggered and within some grace period the nodes
 		// have not upgraded we reject the block validation
-		if wo.NumberU64(common.ZONE_CTX) > params.GoldenAgeForkNumberV1+params.GoldenAgeForkGraceNumber {
-			if wo.GasLimit() < params.MinGasLimit(params.GoldenAgeForkNumberV1) {
-				return fmt.Errorf("zone gas limit is less than the new fork gas limit")
-			}
-		}
-		if wo.NumberU64(common.ZONE_CTX) > params.GoldenAgeForkNumberV2+params.GoldenAgeForkGraceNumber {
-			if wo.GasLimit() < params.MinGasLimit(params.GoldenAgeForkNumberV2) {
+		if wo.NumberU64(common.ZONE_CTX) > params.GoldenAgeForkNumberV4+params.GoldenAgeForkGraceNumber {
+			if wo.GasLimit() < params.MinGasLimit(params.GoldenAgeForkNumberV4) {
 				return fmt.Errorf("zone gas limit is less than the new fork gas limit")
 			}
 		}
@@ -278,13 +273,8 @@ func (v *BlockValidator) SanityCheckWorkObjectHeaderViewBody(wo *types.WorkObjec
 	} else {
 		// If the fork has been triggered and within some grace period the nodes
 		// have not upgraded we reject the block validation
-		if wo.NumberU64(common.ZONE_CTX) > params.GoldenAgeForkNumberV1+params.GoldenAgeForkGraceNumber {
-			if wo.GasLimit() < params.MinGasLimit(params.GoldenAgeForkNumberV1) {
-				return fmt.Errorf("zone gas limit is less than the new fork gas limit")
-			}
-		}
-		if wo.NumberU64(common.ZONE_CTX) > params.GoldenAgeForkNumberV2+params.GoldenAgeForkGraceNumber {
-			if wo.GasLimit() < params.MinGasLimit(params.GoldenAgeForkNumberV2) {
+		if wo.NumberU64(common.ZONE_CTX) > params.GoldenAgeForkNumberV4+params.GoldenAgeForkGraceNumber {
+			if wo.GasLimit() < params.MinGasLimit(params.GoldenAgeForkNumberV4) {
 				return fmt.Errorf("zone gas limit is less than the new fork gas limit")
 			}
 		}
@@ -425,6 +415,9 @@ func CalcGasLimit(parent *types.WorkObject, gasCeil uint64) uint64 {
 	delta := parentGasLimit/params.GasLimitBoundDivisor - 1
 	limit := parentGasLimit
 	if parent.NumberU64(common.ZONE_CTX) == params.GoldenAgeForkNumberV2 {
+		limit = params.MinGasLimit(parent.NumberU64(common.ZONE_CTX))
+	}
+	if parent.NumberU64(common.ZONE_CTX) == params.GoldenAgeForkNumberV4 {
 		limit = params.MinGasLimit(parent.NumberU64(common.ZONE_CTX))
 	}
 
