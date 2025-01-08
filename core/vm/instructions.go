@@ -551,7 +551,11 @@ func opSload(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]by
 		return nil, err
 	}
 	if addressOk, slotOk := interpreter.evm.StateDB.SlotInAccessList(addr.Bytes20(), hash); !addressOk || !slotOk {
-		return nil, ErrInvalidAccessList
+		if interpreter.evm.Context.BlockNumber.Uint64() >= params.GoldenAgeForkNumberV4 && !addressOk {
+			return nil, ErrInvalidAccessList
+		} else if interpreter.evm.Context.BlockNumber.Uint64() < params.GoldenAgeForkNumberV4 && (!addressOk || !slotOk) {
+			return nil, ErrInvalidAccessList
+		}
 	}
 	val := interpreter.evm.StateDB.GetState(addr, hash)
 	loc.SetBytes(val.Bytes())
@@ -566,7 +570,11 @@ func opSstore(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]b
 		return nil, err
 	}
 	if addressOk, slotOk := interpreter.evm.StateDB.SlotInAccessList(addr.Bytes20(), common.Hash(loc.Bytes32())); !addressOk || !slotOk {
-		return nil, ErrInvalidAccessList
+		if interpreter.evm.Context.BlockNumber.Uint64() >= params.GoldenAgeForkNumberV4 && !addressOk {
+			return nil, ErrInvalidAccessList
+		} else if interpreter.evm.Context.BlockNumber.Uint64() < params.GoldenAgeForkNumberV4 && (!addressOk || !slotOk) {
+			return nil, ErrInvalidAccessList
+		}
 	}
 	interpreter.evm.StateDB.SetState(addr,
 		loc.Bytes32(), val.Bytes32())
