@@ -232,7 +232,7 @@ message ProtoKeysAndValues {
 }
 
 message ProtoTrimDepths {
-  map<uint32, uint64> trim_depths = 1;
+  map<bytes, bytes> trim_depths = 1;
 }
 
 message ProtoTokenChoiceSet {
