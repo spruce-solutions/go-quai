@@ -690,20 +690,34 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 	primaryCoinbase := block.PrimaryCoinbase()
 	secondaryCoinbase := block.SecondaryCoinbase()
 
+	// 50% of the fees goes to the calculation  of the averageFees generated,
+	// and this is added to the block rewards
+	halfQuaiFees := new(big.Int).Div(quaiFees, common.Big2)
+	halfQiFees := new(big.Int).Div(qiFees, common.Big2)
+
+	// convert the qi fees to quai
+	halfQiFeesInQuai := misc.QiToQuai(parent, halfQiFees)
+	totalFeesForCapacitor := new(big.Int).Add(halfQuaiFees, halfQiFeesInQuai)
+
+	expectedAvgFees := p.hc.ComputeAverageTxFees(parent, totalFeesForCapacitor)
+	if expectedAvgFees.Cmp(block.AvgTxFees()) != 0 {
+		return nil, nil, nil, nil, 0, 0, 0, nil, nil, fmt.Errorf("invalid avgTxFees used (remote: %d local: %d)", block.AvgTxFees(), expectedAvgFees)
+	}
+
 	// If the primary coinbase belongs to a ledger and there is no fees
 	// for other ledger, there is no etxs emitted for the other ledger
 	if bytes.Equal(block.PrimaryCoinbase().Bytes(), quaiCoinbase.Bytes()) {
-		coinbaseFeeEtx := types.NewTx(&types.ExternalTx{To: &primaryCoinbase, Gas: params.TxGas, Value: quaiFees, EtxType: types.CoinbaseType, OriginatingTxHash: common.SetBlockHashForQuai(parentHash, nodeLocation), ETXIndex: uint16(len(emittedEtxs)), Sender: primaryCoinbase, Data: []byte{block.Lock()}})
+		coinbaseFeeEtx := types.NewTx(&types.ExternalTx{To: &primaryCoinbase, Gas: params.TxGas, Value: halfQuaiFees, EtxType: types.CoinbaseType, OriginatingTxHash: common.SetBlockHashForQuai(parentHash, nodeLocation), ETXIndex: uint16(len(emittedEtxs)), Sender: primaryCoinbase, Data: []byte{block.Lock()}})
 		emittedEtxs = append(emittedEtxs, coinbaseFeeEtx)
 		if qiFees.Cmp(big.NewInt(0)) != 0 {
-			coinbaseEtx := types.NewTx(&types.ExternalTx{To: &secondaryCoinbase, Gas: params.TxGas, Value: qiFees, EtxType: types.CoinbaseType, OriginatingTxHash: common.SetBlockHashForQi(parentHash, nodeLocation), ETXIndex: uint16(len(emittedEtxs)), Sender: secondaryCoinbase, Data: []byte{block.Lock()}})
+			coinbaseEtx := types.NewTx(&types.ExternalTx{To: &secondaryCoinbase, Gas: params.TxGas, Value: halfQiFees, EtxType: types.CoinbaseType, OriginatingTxHash: common.SetBlockHashForQi(parentHash, nodeLocation), ETXIndex: uint16(len(emittedEtxs)), Sender: secondaryCoinbase, Data: []byte{block.Lock()}})
 			emittedEtxs = append(emittedEtxs, coinbaseEtx)
 		}
 	} else if bytes.Equal(block.PrimaryCoinbase().Bytes(), qiCoinbase.Bytes()) {
-		coinbaseFeeEtx := types.NewTx(&types.ExternalTx{To: &primaryCoinbase, Gas: params.TxGas, Value: qiFees, EtxType: types.CoinbaseType, OriginatingTxHash: common.SetBlockHashForQi(parentHash, nodeLocation), ETXIndex: uint16(len(emittedEtxs)), Sender: primaryCoinbase, Data: []byte{block.Lock()}})
+		coinbaseFeeEtx := types.NewTx(&types.ExternalTx{To: &primaryCoinbase, Gas: params.TxGas, Value: halfQiFees, EtxType: types.CoinbaseType, OriginatingTxHash: common.SetBlockHashForQi(parentHash, nodeLocation), ETXIndex: uint16(len(emittedEtxs)), Sender: primaryCoinbase, Data: []byte{block.Lock()}})
 		emittedEtxs = append(emittedEtxs, coinbaseFeeEtx)
 		if quaiFees.Cmp(big.NewInt(0)) != 0 {
-			coinbaseFeeEtx := types.NewTx(&types.ExternalTx{To: &secondaryCoinbase, Gas: params.TxGas, Value: quaiFees, EtxType: types.CoinbaseType, OriginatingTxHash: common.SetBlockHashForQuai(parentHash, nodeLocation), ETXIndex: uint16(len(emittedEtxs)), Sender: secondaryCoinbase, Data: []byte{block.Lock()}})
+			coinbaseFeeEtx := types.NewTx(&types.ExternalTx{To: &secondaryCoinbase, Gas: params.TxGas, Value: halfQuaiFees, EtxType: types.CoinbaseType, OriginatingTxHash: common.SetBlockHashForQuai(parentHash, nodeLocation), ETXIndex: uint16(len(emittedEtxs)), Sender: secondaryCoinbase, Data: []byte{block.Lock()}})
 			emittedEtxs = append(emittedEtxs, coinbaseFeeEtx)
 		}
 	}
@@ -768,6 +782,8 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 		parentOfTargetBlock := p.hc.GetBlockByHash(targetBlock.ParentHash(common.ZONE_CTX))
 
 		blockRewardAtTargetBlock := misc.CalculateQuaiReward(parentOfTargetBlock)
+		// add the fee capacitor value
+		blockRewardAtTargetBlock = new(big.Int).Add(blockRewardAtTargetBlock, targetBlock.AvgTxFees())
 
 		// Add an etx for each workshare for it to be rewarded
 		for i, share := range sharesAtTargetBlockDepth {
