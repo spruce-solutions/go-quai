@@ -32,6 +32,7 @@ import (
 	"github.com/dominant-strategies/go-quai/core/state/snapshot"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/crypto"
+	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/metrics_config"
 	"github.com/dominant-strategies/go-quai/rlp"
@@ -48,7 +49,6 @@ var (
 	emptyRoot    = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 	newestEtxKey = common.HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffff") // max hash
 	oldestEtxKey = common.HexToHash("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffe") // max hash - 1
-
 )
 
 type proofList [][]byte
@@ -420,6 +420,10 @@ func (s *StateDB) Database() Database {
 
 func (s *StateDB) ETXDatabase() Database {
 	return s.etxDb
+}
+
+func (s *StateDB) UnderlyingDatabase() ethdb.KeyValueReader {
+	return s.db.TrieDB().DiskDB()
 }
 
 // StorageTrie returns the storage trie of an account.
