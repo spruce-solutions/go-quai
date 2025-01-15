@@ -46,6 +46,7 @@ func (h Header) MarshalJSON() ([]byte, error) {
 		ExchangeRate					*hexutil.Big			`json:"exchangeRate"				gencodec:"required"`
 		QuaiToQi 						*hexutil.Big 			`json:"quaiToQi" 					gencodec:"required"`
 		QiToQuai 						*hexutil.Big 			`json:"qiToQuai" 					gencodec:"required"`
+		AvgTxFees 						*hexutil.Big 			`json:"avgTxFees" 					gencodec:"required"`
 	}
 	// Initialize the enc struct
 	enc.ParentEntropy = make([]*hexutil.Big, common.HierarchyDepth)
@@ -90,6 +91,7 @@ func (h Header) MarshalJSON() ([]byte, error) {
 	enc.ExchangeRate = (*hexutil.Big)(h.ExchangeRate())
 	enc.QuaiToQi = (*hexutil.Big)(h.QuaiToQi())
 	enc.QiToQuai = (*hexutil.Big)(h.QiToQuai())
+	enc.AvgTxFees = (*hexutil.Big)(h.AvgTxFees())
 	raw, err := json.Marshal(&enc)
 	return raw, err
 }
@@ -129,6 +131,7 @@ func (h *Header) UnmarshalJSON(input []byte) error {
 		ExchangeRate					*hexutil.Big			`json:"exchangeRate"				gencodec:"required"`
 		QuaiToQi 						*hexutil.Big 			`json:"quaiToQi" 					gencodec:"required"`
 		QiToQuai 						*hexutil.Big 			`json:"qiToQuai" 					gencodec:"required"`
+		AvgTxFees 						*hexutil.Big 			`json:"avgTxFees" 					gencodec:"required"`
 	}
 	if err := json.Unmarshal(input, &dec); err != nil {
 		return err
