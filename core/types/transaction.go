@@ -670,6 +670,10 @@ func (tx *Transaction) SetLocal(local bool) {
 	tx.local.Store(local)
 }
 
+func (tx *Transaction) Time() time.Time {
+	return tx.time
+}
+
 // Hash returns the transaction hash.
 func (tx *Transaction) Hash(location ...byte) (h common.Hash) {
 	if hash := tx.hash.Load(); hash != nil {
